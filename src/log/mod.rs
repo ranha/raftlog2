@@ -9,6 +9,146 @@ use crate::{ErrorKind, Result};
 
 mod history;
 
+/// ログの要素、すなわちエントリ.
+/// ログはログエントリのなす列で定義される。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum LogEntry {
+    /// termの切り替わりを`Noop`エントリで表す。
+    /// すなわちログはNoopで区切られており、
+    /// Noop A.... Noop B... Noop C...
+    /// 各区間（ここではA, B, Cなど）は個別のtermでの出来事を意味している
+    Noop { term: Term },
+
+    /// クラスタ構成の変更を共有するためのエントリ.
+    /// 上述の通りこれはNoopで挟まれるのでtermメンバは不要だが
+    /// ログエントリを操作せずに済むようにここでは随伴させる。
+    Config { term: Term, config: ClusterConfig },
+
+    /// 状態機械の入力となるコマンドを格納したエントリ.
+    /// termメンバは前述の通りなくても良いが、現在の実装では入れている。
+    Command { term: Term, command: Vec<u8> },
+}
+impl LogEntry {
+    /// このエントリが発行された`Term`を返す.
+    pub fn term(&self) -> Term {
+        match *self {
+            LogEntry::Noop { term } => term,
+            LogEntry::Config { term, .. } => term,
+            LogEntry::Command { term, .. } => term,
+        }
+    }
+}
+
+/// ログエントリのインデックスを表す型で、u64の単なるnewtype.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct LogIndex(u64);
+impl LogIndex {
+    /// 新しい`LogIndex`インスタンスを生成する.
+    pub fn new(index: u64) -> Self {
+        LogIndex(index)
+    }
+
+    /// インデックスの値を返す.
+    pub fn as_u64(self) -> u64 {
+        self.0
+    }
+}
+impl From<u64> for LogIndex {
+    fn from(f: u64) -> Self {
+        LogIndex::new(f)
+    }
+}
+impl Add<usize> for LogIndex {
+    type Output = Self;
+    fn add(self, rhs: usize) -> Self::Output {
+        LogIndex(self.0 + rhs as u64)
+    }
+}
+impl AddAssign<usize> for LogIndex {
+    fn add_assign(&mut self, rhs: usize) {
+        self.0 += rhs as u64;
+    }
+}
+impl Sub for LogIndex {
+    type Output = usize;
+    fn sub(self, rhs: Self) -> Self::Output {
+        (self.0 - rhs.0) as usize
+    }
+}
+impl Sub<usize> for LogIndex {
+    type Output = Self;
+    fn sub(self, rhs: usize) -> Self::Output {
+        LogIndex(self.0 - rhs as u64)
+    }
+}
+impl SubAssign<usize> for LogIndex {
+    fn sub_assign(&mut self, rhs: usize) {
+        self.0 -= rhs as u64;
+    }
+}
+
+
+/// ログの特定位置を識別するためのデータ構造.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct LogPosition {
+    /// 一つ前のインデックスのエントリの`Term`.
+    ///
+    /// FIX: なぜこれが必要なのか全く理解できない
+    pub prev_term: Term,
+
+    /// この位置のインデックス.
+    ///
+    /// FIX: 位置のインデクスとは???
+    pub index: LogIndex,
+}
+impl LogPosition {
+    /// `self`がログ上で、`other`と等しい、あるいは、より後方に位置している場合に`true`が返る.
+    ///
+    /// なお`self`と`other`が、それぞれ分岐したログ上に位置しており、
+    /// 前後関係が判断できない場合には`false`が返される.
+    ///
+    /// FIX: 分岐とは何ですか??
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use raftlog::log::LogPosition;
+    ///
+    /// // `a`の方がインデックスが大きい
+    /// let a = LogPosition { prev_term: 10.into(), index: 5.into() };
+    /// let b = LogPosition { prev_term: 10.into(), index: 3.into() };
+    /// assert!(a.is_newer_or_equal_than(b));
+    /// assert!(!b.is_newer_or_equal_than(a));
+    ///
+    /// // `a`の方が`Term`が大きい
+    /// let a = LogPosition { prev_term: 20.into(), index: 3.into() };
+    /// let b = LogPosition { prev_term: 10.into(), index: 3.into() };
+    /// assert!(a.is_newer_or_equal_than(b));
+    /// assert!(!b.is_newer_or_equal_than(a));
+    ///
+    /// // `a`の方がインデックスは大きいが、`b`の方が`Term`は大きい
+    /// // => 順序が確定できない
+    /// let a = LogPosition { prev_term: 5.into(), index: 10.into() };
+    /// let b = LogPosition { prev_term: 10.into(), index: 3.into() };
+    /// assert!(!a.is_newer_or_equal_than(b));
+    /// assert!(!b.is_newer_or_equal_than(a));
+    /// ```
+    pub fn is_newer_or_equal_than(&self, other: LogPosition) -> bool {
+        self.prev_term >= other.prev_term && self.index >= other.index
+    }
+}
+
+/// 提案ID.
+/// FIX: ここで定義する必要がある構造体か???
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct ProposalId {
+    /// 提案が発行された時の`Term`.
+    pub term: Term,
+
+    /// 提案を保持するエントリのログ内でのインデックス.
+    pub index: LogIndex,
+}
+
 /// ローカルログ.
 #[derive(Debug)]
 pub enum Log {
@@ -32,6 +172,10 @@ impl From<LogSuffix> for Log {
 /// ログの前半部分 (i.e., スナップショット).
 #[derive(Debug, Clone)]
 pub struct LogPrefix {
+    /// FIX: LogPrefix = cons(prefix, tail) か?
+    /// FIX: config = configuration of last(prefix)か?
+    /// FIX: snapshot = foldl(init: machine_init_config, execute, prefix)か?
+    
     /// 前半部分の終端位置.
     ///
     /// "終端位置" = "前半部分に含まれない最初の位置".
@@ -52,16 +196,20 @@ pub struct LogPrefix {
 /// ただし、このデータ構造自体は、常に追記的なアクセスのために利用され、
 /// "ログの途中の一部だけを更新する"といった操作は発生しないので、
 /// "常にログの末尾に対して適用される"的な意味合いで`Suffix`と付けている.
+///
+/// FIX: コメントが意味不明。snapshot化されていない部分のことを意味しているだけではないのか??
 #[derive(Debug, Clone)]
 pub struct LogSuffix {
+    /// 後半部分に属するエントリ群.
+    pub entries: Vec<LogEntry>,
+    
     /// ログの開始位置.
     ///
     /// `entries`のサイズが1以上の場合には、
     /// その最初のエントリの位置となる.
+    ///
+    /// FIX: 「エントリ位置」が何のことか全く伝わらない
     pub head: LogPosition,
-
-    /// 後半部分に属するエントリ群.
-    pub entries: Vec<LogEntry>,
 }
 impl LogSuffix {
     /// ログの終端位置を返す.
@@ -190,135 +338,6 @@ impl<'a> Iterator for LogPositions<'a> {
             self.offset += 1;
             Some(id)
         }
-    }
-}
-
-/// ログに格納されるエントリ.
-#[derive(Debug, Clone, PartialEq, Eq)]
-#[allow(missing_docs)]
-pub enum LogEntry {
-    /// 特に内容を持たないエントリ.
-    ///
-    /// リーダ選出時には、最初にこのエントリがログに追加され、
-    /// `Term`が変わったことを記録する.
-    Noop { term: Term },
-
-    /// クラスタ構成の変更を共有するためのエントリ.
-    Config { term: Term, config: ClusterConfig },
-
-    /// 状態機械の入力となるコマンドを格納したエントリ.
-    Command { term: Term, command: Vec<u8> },
-}
-impl LogEntry {
-    /// このエントリが発行された`Term`を返す.
-    pub fn term(&self) -> Term {
-        match *self {
-            LogEntry::Noop { term } => term,
-            LogEntry::Config { term, .. } => term,
-            LogEntry::Command { term, .. } => term,
-        }
-    }
-}
-
-/// 提案ID.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct ProposalId {
-    /// 提案が発行された時の`Term`.
-    pub term: Term,
-
-    /// 提案を保持するエントリのログ内でのインデックス.
-    pub index: LogIndex,
-}
-
-/// ログの特定位置を識別するためのデータ構造.
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct LogPosition {
-    /// 一つ前のインデックスのエントリの`Term`.
-    pub prev_term: Term,
-
-    /// この位置のインデックス.
-    pub index: LogIndex,
-}
-impl LogPosition {
-    /// `self`がログ上で、`other`と等しい、あるいは、より後方に位置している場合に`true`が返る.
-    ///
-    /// なお`self`と`other`が、それぞれ分岐したログ上に位置しており、
-    /// 前後関係が判断できない場合には`false`が返される.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use raftlog::log::LogPosition;
-    ///
-    /// // `a`の方がインデックスが大きい
-    /// let a = LogPosition { prev_term: 10.into(), index: 5.into() };
-    /// let b = LogPosition { prev_term: 10.into(), index: 3.into() };
-    /// assert!(a.is_newer_or_equal_than(b));
-    /// assert!(!b.is_newer_or_equal_than(a));
-    ///
-    /// // `a`の方が`Term`が大きい
-    /// let a = LogPosition { prev_term: 20.into(), index: 3.into() };
-    /// let b = LogPosition { prev_term: 10.into(), index: 3.into() };
-    /// assert!(a.is_newer_or_equal_than(b));
-    /// assert!(!b.is_newer_or_equal_than(a));
-    ///
-    /// // `a`の方がインデックスは大きいが、`b`の方が`Term`は大きい
-    /// // => 順序が確定できない
-    /// let a = LogPosition { prev_term: 5.into(), index: 10.into() };
-    /// let b = LogPosition { prev_term: 10.into(), index: 3.into() };
-    /// assert!(!a.is_newer_or_equal_than(b));
-    /// assert!(!b.is_newer_or_equal_than(a));
-    /// ```
-    pub fn is_newer_or_equal_than(&self, other: LogPosition) -> bool {
-        self.prev_term >= other.prev_term && self.index >= other.index
-    }
-}
-
-/// あるログエントリのインデックス.
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub struct LogIndex(u64);
-impl LogIndex {
-    /// 新しい`LogIndex`インスタンスを生成する.
-    pub fn new(index: u64) -> Self {
-        LogIndex(index)
-    }
-
-    /// インデックスの値を返す.
-    pub fn as_u64(self) -> u64 {
-        self.0
-    }
-}
-impl From<u64> for LogIndex {
-    fn from(f: u64) -> Self {
-        LogIndex::new(f)
-    }
-}
-impl Add<usize> for LogIndex {
-    type Output = Self;
-    fn add(self, rhs: usize) -> Self::Output {
-        LogIndex(self.0 + rhs as u64)
-    }
-}
-impl AddAssign<usize> for LogIndex {
-    fn add_assign(&mut self, rhs: usize) {
-        self.0 += rhs as u64;
-    }
-}
-impl Sub for LogIndex {
-    type Output = usize;
-    fn sub(self, rhs: Self) -> Self::Output {
-        (self.0 - rhs.0) as usize
-    }
-}
-impl Sub<usize> for LogIndex {
-    type Output = Self;
-    fn sub(self, rhs: usize) -> Self::Output {
-        LogIndex(self.0 - rhs as u64)
-    }
-}
-impl SubAssign<usize> for LogIndex {
-    fn sub_assign(&mut self, rhs: usize) {
-        self.0 -= rhs as u64;
     }
 }
 

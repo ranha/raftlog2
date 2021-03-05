@@ -5,6 +5,23 @@ use crate::cluster::ClusterConfig;
 use crate::log::{LogEntry, LogIndex, LogPosition, LogPrefix, LogSuffix};
 use crate::{ErrorKind, Result};
 
+/// Historyを表す要素
+/// これの列が`LogHistory`を表す。
+#[derive(Debug, Clone)]
+pub struct HistoryRecord {
+    /// 記録地点.
+    /// FIX: headってどういう意味??
+    pub head: LogPosition,
+
+    /// 記録時のクラスタ構成.
+    pub config: ClusterConfig,
+}
+impl HistoryRecord {
+    fn new(head: LogPosition, config: ClusterConfig) -> Self {
+        HistoryRecord { head, config }
+    }
+}
+
 /// ローカルログの歴史(要約)を保持するためのデータ構造.
 ///
 /// スナップショット地点以降のローカルログに関して発生した、
@@ -14,11 +31,23 @@ use crate::{ErrorKind, Result};
 /// 「ログの消費済み末尾(log_consumed_tail)」の三つの地点を保持している.
 ///
 /// それらの関しては`log_consumed_tail <= log_committed_tail <= log_tail`の不変項が維持される.
+///
+/// FIX: 抽象的すぎて意味が不明
+/// FIX: ログと別にこれを導入する理由は??
 #[derive(Debug, Clone)]
 pub struct LogHistory {
+    // ログ全体の末尾位置
     appended_tail: LogPosition,
+
+    // コミット済みの末尾位置
+    // これは < appended_tail になる
     committed_tail: LogPosition,
+
+    // 状態機械に反映済みの末尾位置
+    // これは < committed_tail になる
     consumed_tail: LogPosition,
+
+    // HistoryRecordって何??
     records: VecDeque<HistoryRecord>,
 }
 impl LogHistory {
@@ -78,13 +107,20 @@ impl LogHistory {
     }
 
     /// `suffix`がローカルログに追記されたことを記録する.
+    ///
+    /// FIX: なぜこのようにbodyが巨大な関数が出てくるのかが説明と一致しない
     pub fn record_appended(&mut self, suffix: &LogSuffix) -> Result<()> {
+        // 意味不明の変数
         let entries_offset = if self.appended_tail.index <= suffix.head.index {
             0
         } else {
             // NOTE:
             // 追記中にスナップショットがインストールされた場合に、
             // 両者の先頭位置がズレることがあるので調整する
+            //
+            // FIX: 意味不明 追記中とは誰によるどの操作のことか???
+            // マルチスレッドの環境のことを気にしているのか?
+            // とてもそのようなコードには見えない
             self.appended_tail.index - suffix.head.index
         };
         for (i, e) in suffix.entries.iter().enumerate().skip(entries_offset) {
@@ -203,6 +239,10 @@ impl LogHistory {
     /// (スナップショット地点から現在までの歴史が消失してしまうため)
     ///
     /// なお、`head`以前の記録は歴史から削除される.
+    ///
+    /// FIX: スナップショットとは何ですか?
+    /// FIX: インストールとは何ですか?
+    /// FIX: インストールされた、とは何ですか? このメソッドはインストールはしないのですか?
     pub fn record_snapshot_installed(
         &mut self,
         new_head: LogPosition,
@@ -222,6 +262,8 @@ impl LogHistory {
             .front()
             .map_or(false, |r| r.head.index <= new_head.index)
         {
+            // FIX: checkしながらmodifyしてるけどこのコード良いの?
+            // FIX: records内部ではどういうinvariantが必要??
             self.records.pop_front();
         }
 
@@ -239,6 +281,7 @@ impl LogHistory {
     }
 
     /// スナップショットが読み込まれたことを記録する.
+    /// FIX: インストールと読み込まれた、は何が違うんですか??
     ///
     /// ローカルログ内のスナップショット地点までのエントリは、消費されたものとして扱われる.
     pub fn record_snapshot_loaded(&mut self, snapshot: &LogPrefix) -> Result<()> {
@@ -253,20 +296,5 @@ impl LogHistory {
             self.consumed_tail = snapshot.tail;
         }
         Ok(())
-    }
-}
-
-/// `LogHistory`に保持されるレコード.
-#[derive(Debug, Clone)]
-pub struct HistoryRecord {
-    /// 記録地点.
-    pub head: LogPosition,
-
-    /// 記録時のクラスタ構成.
-    pub config: ClusterConfig,
-}
-impl HistoryRecord {
-    fn new(head: LogPosition, config: ClusterConfig) -> Self {
-        HistoryRecord { head, config }
     }
 }

@@ -1,11 +1,12 @@
 //! リーダ選出関連の構成要素群.
 use crate::node::NodeId;
 
-/// ある選挙ないしリーダの任期期間を識別するための番号.
+/// Termを意味する自然数
 ///
-/// 番号の値は`0`から始まり「新しい選挙に立候補する」ないし「新しいリーダが選出される」タイミングで、
-/// 増加している.
-/// なお、この番号は一つのクラスタにおいて常に増加していき、減少することはない.
+/// Termによって、基本区間（選挙中期間またはリーダの連続在位期間）を表す。
+///
+/// 0-originで単調増加する。
+/// 増加のタイミングについては、「新たな選挙を開始する」または「新しいリーダが統治開始」する２つがある。
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct Term(u64);
 impl Term {
@@ -25,7 +26,7 @@ impl From<u64> for Term {
     }
 }
 
-/// 選挙でのノードの投票内容.
+/// あるノードの1つの投票内容を表す.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Ballot {
     /// どの選挙での投票かを識別するための期間番号.
@@ -35,7 +36,8 @@ pub struct Ballot {
     pub voted_for: NodeId,
 }
 
-/// 選挙におけるノードの役割.
+/// あるノードの選挙におけるノードの役割.
+/// FIX: termごとに考えるものでなくて良いか?
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Role {
     /// 他の候補者(or リード)に投票済み.

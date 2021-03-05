@@ -67,14 +67,15 @@ impl ClusterConfig {
         &self.old
     }
 
-    /// プライマリなメンバ集合が返される.
+    /// "プライマリメンバ"の全体集合Pを返す。
     ///
-    /// "プライマリな集合"とは、それに属するメンバーの過半数以上の合意が得られれば、
-    /// クラスタ全体の分散ログの整合性が崩れるようなことがないような
-    /// 集合をことを指す.
+    /// プライマリメンバ: 合意に有効なメンバ
+    /// サービスの整合性を担保するには、
+    /// 単なる過半数以上の合意ではなく、「Pから過半数以上の合意」を得なくてはならない。
     ///
-    /// これは、安定状態では「クラスタのメンバ群」と一致し、
-    /// 構成変更時には「旧構成に属するメンバ群」となる.
+    /// メンバとプライマリメンバの区別は、構成変更過渡期で必要になる。
+    /// 安定状態では、メンバはプライマリメンバとして見て良い。
+    /// 構成変更時には、旧構成に属するメンバのみがプライマリメンバとなる。
     pub fn primary_members(&self) -> &ClusterMembers {
         match self.state {
             ClusterState::Stable => &self.new,
@@ -95,7 +96,7 @@ impl ClusterConfig {
         self.new.contains(node) || self.old.contains(node)
     }
 
-    /// 新しい安定状態の`ClusterConfig`インスタンスを生成する.
+    /// 安定状態の`ClusterConfig`インスタンスを生成する.
     pub fn new(members: ClusterMembers) -> Self {
         ClusterConfig {
             new: members,
@@ -104,7 +105,7 @@ impl ClusterConfig {
         }
     }
 
-    /// 構成変更中の`ClusterConfig`インスタンスを生成する.
+    /// `state`を状態とする`ClusterConfig`インスタンスを生成する.
     pub fn with_state(
         new_members: ClusterMembers,
         old_members: ClusterMembers,
@@ -117,8 +118,9 @@ impl ClusterConfig {
         }
     }
 
-    /// 構成変更を開始するために、`new`を構成変更後のメンバ群として設定し、
-    /// `CatchUp`状態に遷移した`ClusterConfig`インスタンスを返す.
+    /// 構成を変更するために、
+    /// `new`を（取り込みたい）新メンバ群とする
+    /// `CatchUp`状態の`ClusterConfig`インスタンスを返す.
     pub(crate) fn start_config_change(&self, new: ClusterMembers) -> Self {
         ClusterConfig {
             new,
@@ -131,9 +133,8 @@ impl ClusterConfig {
     ///
     /// # 状態遷移表
     ///
-    /// - `Stable` => `Stable`
-    /// - `CatchUp` => `Joint`
-    /// - `Joint` => `Stable`
+    ///                         v------|
+    /// CatchUp --> Joint --> Stable --|
     pub(crate) fn to_next_state(&self) -> Self {
         match self.state {
             ClusterState::Stable => self.clone(),
@@ -144,22 +145,20 @@ impl ClusterConfig {
             }
             ClusterState::Joint => {
                 let mut next = self.clone();
-                next.old = ClusterMembers::new();
+                next.old = ClusterMembers::new(); // Stableではoldは空集合
                 next.state = ClusterState::Stable;
                 next
             }
         }
     }
 
-    /// 現在の構成での最新の合意値を返す.
+    /// クラスタの合意値.
     //
-    /// `f`は、各メンバの現在の承認値を返す関数.
-    /// あるメンバが、仮にXという値を返したとして場合、
-    /// それよりも小さな任意の値yに関しても、
-    /// 承認済みのものとして扱われる.
+    /// `f`は関数で、メンバごとの承認値を表す。
+    /// f(m) = xは次の意味でm中で最大である:
+    /// mの中でy < xであればyも承認済み。
     ///
-    /// 最終的な合意値は「メンバの過半数が承認した値集合の中で
-    /// 最も大きな値」となる.
+    /// クラスタ合意値は「メンバの過半数によって承認されている最大の値」
     pub(crate) fn consensus_value<F, T>(&self, f: F) -> T
     where
         F: Fn(&NodeId) -> T,
@@ -171,13 +170,16 @@ impl ClusterConfig {
             ClusterState::Joint => {
                 // joint consensus
                 cmp::min(median(&self.new, &f), median(&self.old, &f))
+
+                // FIX
+                // median(self.new + self.old, f)でダメな理由は何？
             }
         }
     }
 
-    /// 基本的には`consensus_value`メソッドと同様.
+    /// Stable, Jointについては`consensus_value`メソッドと同様.
     ///
-    /// ただし構成変更中には、常に新旧メンバ群の両方から、
+    /// Catchup(構成変更中)では、新旧メンバ群の両方から、
     /// 過半数の承認を要求するところが異なる.
     pub(crate) fn full_consensus_value<F, T>(&self, f: F) -> T
     where
@@ -187,23 +189,35 @@ impl ClusterConfig {
         if self.state.is_stable() {
             median(&self.new, &f)
         } else {
-            // joint consensus
+            // joint & catchup consensus
             cmp::min(median(&self.new, &f), median(&self.old, &f))
         }
     }
 }
 
+// FIX: 「メンバの過半数によって承認されている最大の値」になっているか検証する
+// 例: 4ノードで次のようになったとする
+// v0 < v1 < v2 < v3
+// v0は4ノードで保証
+// v1は3ノードで保証
+// ということになるので、過半数である3ノードでの保証はv1まで
+// 従って ascending sort をした後に
+// med-positonの値をとってやれば良い
+//
+// 現在の実装の過ちを指摘する場合は、具体的な状況とのsetで提供すること。
 fn median<F, T>(members: &ClusterMembers, f: F) -> T
 where
     F: Fn(&NodeId) -> T,
     T: Ord + Copy + Default,
 {
     let mut values = members.iter().map(|n| f(n)).collect::<Vec<_>>();
-    values.sort();
-    values.reverse();
+    values.sort(); // v[0] < v[1] < ...
+    values.reverse(); // v[0] > v[1] > ...
     if values.is_empty() {
-        T::default()
+        unreachable!("FIX");
     } else {
+        // 2nの過半数はn+1 (0-originならn)
+        // (2n)+1の過半数はn+1 (0-originならn)
         values[members.len() / 2]
     }
 }

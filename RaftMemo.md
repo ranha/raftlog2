@@ -1,3 +1,7 @@
+# バグを疑っている箇所
+
+* `cluster.rs/median`及びそれを使っている箇所
+
 # Raftの解説
 
 Core raftとメンバ構成変更に分けて説明する。
@@ -37,3 +41,38 @@ Leaderは「過半数表を得る」ことに加えて「資質」を満たし�
 * メンバ構成変更
 
 オリジナルの論文にない工夫について。
+
+## Implementation
+```
+src
+├── cluster.rs (Raftクラスタに関するコード群)
+├── election.rs 選挙のための基本構造 (Term, Ballot, Role)
+├── error.rs (このライブラリのエラー表現を束ねるもの)
+├── io.rs (I/O処理を抽象化したtrait; I/O処理はストレージI/OとネットワークI/Oの二種類)
+├── lib.rs (このライブラリを総括するモジュール)
+├── log
+│   ├── history.rs（ログではないhistoryという謎の構造を定義している）
+│   └── mod.rs（ログを定義しているが複雑すぎる）
+├── message.rs（メッセージパッシング用の構造体など）
+├── metrics.rs（Prometheusなどで使うためのもので計算には無関係）
+├── node.rs（Raft clusterの基本構成単位であるノードを表す構造体等）
+├── node_state（各nodeでの計算を行うためのもの。基本的に複雑すぎる）
+│   ├── candidate.rs
+│   ├── common
+│   │   ├── mod.rs
+│   │   └── rpc_builder.rs
+│   ├── follower
+│   │   ├── append.rs
+│   │   ├── idle.rs
+│   │   ├── init.rs
+│   │   ├── mod.rs
+│   │   └── snapshot.rs
+│   ├── leader
+│   │   ├── appender.rs
+│   │   ├── follower.rs
+│   │   └── mod.rs
+│   ├── loader.rs
+│   └── mod.rs
+├── replicated_log.rs（命名がかなり悪い。これはraft clusterそのものまたはreplicated state machineのこと）
+└── test_util.rs
+```

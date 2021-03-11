@@ -106,6 +106,8 @@ where
     }
 
     /// ログのスナップショットロードイベントを処理する.
+    ///
+    /// FIX: loadとinstallの用語の違いを明らかにせよ。
     pub fn handle_log_snapshot_loaded(&mut self, prefix: LogPrefix) -> Result<()> {
         if self.history.committed_tail().index < prefix.tail.index {
             // タイミング次第では、進行中のスナップショットインストールを追い越して、
@@ -279,6 +281,8 @@ where
     }
 
     /// ローカルログのスナップショットのインストールを開始する.
+    ///
+    /// FIX: スナップショットロードとインストールの違いを明らかにせよ。
     pub fn install_snapshot(&mut self, snapshot: LogPrefix) -> Result<()> {
         track_assert!(
             self.history.head().index <= snapshot.tail.index,

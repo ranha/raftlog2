@@ -1,6 +1,18 @@
 # バグを疑っている箇所
 
 * `cluster.rs/median`及びそれを使っている箇所
+* [Frugalosのこのコメント直せる?](https://github.com/frugalos/frugalos/blob/84898a76ee6e8f0f68159769f1ea964dfa5c04bd/frugalos_mds/src/node/node.rs#L574)
+* [ReadConsistency](https://github.com/frugalos/libfrugalos/blob/master/src/consistency.rs)はデフォルトだとConsistentで、
+これは[自分がリーダーだと分かれば](https://github.com/frugalos/frugalos/blob/4decaea4131bbf73e2229b9b52d880b20a289324/frugalos_mds/src/node/node.rs#L411)ヨシとする設定ではある。
+    * しかしstale leaderの場合には、実際にはある（running subclusterでput済み）ものをないと答えたり、既に削除されたものをある（running subclusterで削除済み）と答える可能性がある。
+    * これを解決する良い方法は何かあるか? 例えば新しいleaderが決まる度にその情報を送るような方法もあるが、たまたまそのパケットだけロストしてしまった場合には、というような話がある。
+    * ハートビートをタイムアウトを使って定常的にやっている場合は、stale leaderかどうかに気づけるが、究極的に間を縫われるとキツイという話。
+
+# raftlog2/main.rsでやること
+
+* 様々な状況を合理的に構成できるように、transition systemに対する操作をできるように、指定したコマンドを順次解釈・実行できるようにする
+* 最初はconfigurationの部分だけやってみる; configurationはデカイので
+    * まずどこからやってみるべきか?
 
 # Raftの解説
 
@@ -51,17 +63,17 @@ src
 ├── io.rs (I/O処理を抽象化したtrait; I/O処理はストレージI/OとネットワークI/Oの二種類)
 ├── lib.rs (このライブラリを総括するモジュール)
 ├── log
-│   ├── history.rs（ログではないhistoryという謎の構造を定義している）
+│   ├── history.rs（ログではないhistoryという謎の構造を定義している どこで使われている?）
 │   └── mod.rs（ログを定義しているが複雑すぎる）
 ├── message.rs（メッセージパッシング用の構造体など）
 ├── metrics.rs（Prometheusなどで使うためのもので計算には無関係）
 ├── node.rs（Raft clusterの基本構成単位であるノードを表す構造体等）
 ├── node_state（各nodeでの計算を行うためのもの。基本的に複雑すぎる）
-│   ├── candidate.rs
-│   ├── common
+│   ├── candidate.rs (candidate stateの抽象)
+│   ├── common (candidate, follower, leaderのsuper class)
 │   │   ├── mod.rs
-│   │   └── rpc_builder.rs
-│   ├── follower
+│   │   └── rpc_builder.rs (RPCの抽象化)
+│   ├── follower (follower stateの抽象)
 │   │   ├── append.rs
 │   │   ├── idle.rs
 │   │   ├── init.rs
@@ -72,7 +84,7 @@ src
 │   │   ├── follower.rs
 │   │   └── mod.rs
 │   ├── loader.rs
-│   └── mod.rs
+│   └── mod.rs (LogHistoryはこいつが持っている)
 ├── replicated_log.rs（命名がかなり悪い。これはraft clusterそのものまたはreplicated state machineのこと）
 └── test_util.rs
 ```

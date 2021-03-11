@@ -138,6 +138,28 @@ Leaderからの情報を受け付けるbufferと、
 後者をoptimizeするとTermになるのかな（stackがcounterのenrichみたいな感じで）
 }
 
+\subsection{OK: Existence of Multiple (Local) Leaders}
+\mbox{}
+\Ja{
+自分のことをleaderだと思いこんでいるノードが複数あるのは問題がない。
+}
+
+\subsection{Bad: Broadcasting data from Multiple Leaders}
+\mbox{}
+\Ja{
+存在するところまでは別に問題ないが、データを配られてackされるとまずい。
+%
+例えば $\hat{n}_1 \xrightarrow{x} n_2$ でack来た後に$x$を外にackして、
+一方で$\hat{n}_3$にqueryが来て、$x$は無いと答えられると不味い。
+%
+でもこれってLeaderが複数あることの問題になっていないか?
+%
+raftlogではreadアクセス時のLeader search問題をどう解決しているか。
+%
+nodeがliveしている間はpushがcommitしたことをオンメモリでcacheしている。
+ではnodeがdead->liveする時はどうか?
+}
+
 \subsection{Ack Timing}
 \red{fuga}
 

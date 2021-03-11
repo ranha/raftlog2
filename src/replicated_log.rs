@@ -319,5 +319,7 @@ pub enum Event {
     ///
     /// もし`new_head`の位置が、最新のコミット済み地点よりも
     /// 新しい場合には、これとは別に`SnapshotLoaded`イベントが発行される.
+    ///
+    /// FIX: LoadとInstallの違いを明記せよ。
     SnapshotInstalled { new_head: LogPosition },
 }

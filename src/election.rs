@@ -36,6 +36,16 @@ pub struct Ballot {
     pub voted_for: NodeId,
 }
 
+impl Ballot {
+    pub fn to_str(&self) -> String {
+        format!(
+            "ballot(term: {}, for: {})",
+            self.term.as_u64(),
+            self.voted_for.as_str()
+        )
+    }
+}
+
 /// あるノードの選挙におけるノードの役割.
 /// FIX: termごとに考えるものでなくて良いか?
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]

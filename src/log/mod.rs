@@ -87,7 +87,6 @@ impl SubAssign<usize> for LogIndex {
     }
 }
 
-
 /// ログの特定位置を識別するためのデータ構造.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct LogPosition {
@@ -175,7 +174,7 @@ pub struct LogPrefix {
     /// FIX: LogPrefix = cons(prefix, tail) か?
     /// FIX: config = configuration of last(prefix)か?
     /// FIX: snapshot = foldl(init: machine_init_config, execute, prefix)か?
-    
+
     /// 前半部分の終端位置.
     ///
     /// "終端位置" = "前半部分に含まれない最初の位置".
@@ -202,7 +201,7 @@ pub struct LogPrefix {
 pub struct LogSuffix {
     /// 後半部分に属するエントリ群.
     pub entries: Vec<LogEntry>,
-    
+
     /// ログの開始位置.
     ///
     /// `entries`のサイズが1以上の場合には、

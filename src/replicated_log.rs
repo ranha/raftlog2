@@ -39,6 +39,8 @@ impl<IO: Io> ReplicatedLog<IO> {
     /// `members`に現行構成を指定することが望ましいが、このケースでは、
     /// `node_id`は`members`の中には含まれないことになる.
     ///
+    /// FIX: 直前2パラグラフは一見で矛盾。引数の意味を「明確化していない」ことが原因。
+    ///
     /// なお、ノードの再起動時を除いて、`node_id`には対象クラスタの歴史の中でユニークなIDを
     /// 割り当てるのが望ましい.
     /// (レアケースではあるが、新規追加ノードを、以前に存在したノードと誤認識されてしまうと、
@@ -47,10 +49,21 @@ impl<IO: Io> ReplicatedLog<IO> {
     /// また、以前のノードを再起動したい場合でも、もし永続ストレージが壊れている等の理由で、
     /// 前回の状態を正確に復元できないのであれば、
     /// ノード名を変更して、新規ノード追加扱いにした方が安全である.
+    /*
+     * + node_id \in members
+     * ++ 破損していたノードの再起動
+     * + node_id \notin members
+     * ++ 新しいノードを追加する準備
+     * ++ このあとpropose_config(members + node_id)が必要（かどうかを明らかにする
+     *
+     * new(fresh_id, running_cluster + fresh_id)するとreconfigureは行われるか?
+     * => 行われないので、running clusterでnode with fresh_idを作った上で
+     * propose_configをしてください。
+     */
     #[allow(clippy::new_ret_no_self)]
     pub fn new(
-        node_id: NodeId,
-        members: ClusterMembers,
+        node_id: NodeId,         // 今から作るノードに付与する名前
+        members: ClusterMembers, // 稼働中のconfigurationに一致する構成員
         io: IO,
         metric_builder: &MetricBuilder,
     ) -> Result<Self> {
@@ -103,6 +116,8 @@ impl<IO: Io> ReplicatedLog<IO> {
     ///
     /// もし返り値の`LogPosition`とは分岐した`Event::Committed`が返された場合には、
     /// この提案が棄却されたことを示している.
+    ///
+    /// FIX: 「分岐」が完全に意味不明
     ///
     /// 複数の構成変更を並行して実施することは可能だが、
     /// その場合は、最後に提案されたものが最終的な構成として採用される.

@@ -125,6 +125,12 @@ impl LogPosition {
     /// assert!(a.is_newer_or_equal_than(b));
     /// assert!(!b.is_newer_or_equal_than(a));
     ///
+    ///
+    /// vvv この下のものが分岐相当なのかもしれない
+    /// vvv 現在追加中のエントリについては
+    /// vvv commit済み箇所まで巻き戻りが発生するので
+    /// vvv その辺についてはありうる。
+    ///
     /// // `a`の方がインデックスは大きいが、`b`の方が`Term`は大きい
     /// // => 順序が確定できない
     /// let a = LogPosition { prev_term: 5.into(), index: 10.into() };
@@ -185,6 +191,11 @@ pub struct LogPrefix {
 
     /// 前半部分に含まれるコマンド群の適用後の状態機械のスナップショット.
     pub snapshot: Vec<u8>,
+}
+impl LogPrefix {
+    pub fn is_match(&self, start: LogIndex, end: Option<LogIndex>) -> bool {
+        start == LogIndex::new(0) && (end.is_none() || end.unwrap() == self.tail.index)
+    }
 }
 
 /// ログの後半部分.

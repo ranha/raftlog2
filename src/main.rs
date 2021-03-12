@@ -85,10 +85,20 @@ impl Io for MockIo {
     // prefixは必ず前回部分を含んでいるものか？
     // それとも新しい差分か？ 多分前者だと思うが何も分からない
     fn save_log_prefix(&mut self, prefix: LogPrefix) -> Self::SaveLog {
-        // 前回の地点をincludeしていることを確認する。
+        if let Some(snap) = &self.snapshotted {
+            // 保存するデータはcommit済みのハズなので
+            // この辺は問題ないだろうsnapshotについてはこれが成立するはず
+            assert!(prefix.tail.is_newer_or_equal_than(snap.tail));
+        }
+        self.snapshotted = Some(prefix);
         LogSaver(SaveMode::SnapshotSave, self.node_id.clone())
     }
     fn save_log_suffix(&mut self, suffix: &LogSuffix) -> Self::SaveLog {
+        if let Some(rawlogs) = &self.rawlogs {
+            // これもcommit済みのデータが来るはずなので通ると思う
+            assert!(suffix.head.is_newer_or_equal_than(rawlogs.head));
+        }
+        self.rawlogs = Some(suffix.clone());
         LogSaver(SaveMode::RawLogSave, self.node_id.clone())
     }
 
@@ -97,7 +107,22 @@ impl Io for MockIo {
         // 要求領域がoverlapしていないことを網羅的に検査すること
         if end == None {
             if let Some(snap) = &self.snapshotted {
-                return LogLoader(Some(Log::from(snap.clone())));
+                if self.rawlogs.is_some() {
+                    // snap ++ rawlogs を 表現するすべがない
+                    println!("load: error 1");
+                } else {
+                    // only snapshot
+                    if snap.is_match(start, end) {
+                        // we have only a snapshot
+                        return LogLoader(Some(Log::from(snap.clone())));
+                    }
+                }
+            } else {
+                if let Some(rawlogs) = &self.rawlogs {
+                    let mut rawlogs = rawlogs.clone();
+                    rawlogs.skip_to(start).unwrap();
+                    return LogLoader(Some(Log::from(rawlogs)));
+                }
             }
         }
 
@@ -105,12 +130,18 @@ impl Io for MockIo {
         assert!(start < end);
 
         if let Some(snap) = &self.snapshotted {
-            return LogLoader(Some(Log::from(snap.clone())));
-        } else if let Some(rawlogs) = &self.rawlogs {
-            return LogLoader(Some(Log::from(rawlogs.clone())));
+            if snap.is_match(start, Some(end)) {
+                return LogLoader(Some(Log::from(snap.clone())));
+            }
         }
 
-        unreachable!("");
+        if let Some(rawlogs) = &self.rawlogs {
+            if let Ok(sliced) = rawlogs.slice(start, end) {
+                return LogLoader(Some(Log::from(sliced)));
+            }
+        }
+
+        panic!("start = {:?}, end = {:?}", start, end);
     }
 
     type Timeout = Invoker;
